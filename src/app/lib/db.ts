@@ -1,0 +1,20 @@
+import mysql from "mysql2/promise";
+
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || "localhost",
+  port: parseInt(process.env.DB_PORT || "3306", 10),
+  database: process.env.DB_NAME || "cronjobs",
+  user: process.env.DB_USER || "root",
+  password: process.env.DB_PASSWORD || "postgress",
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  idleTimeout: 60000,
+  connectTimeout: 10000,
+  // SSL for production
+  ...(process.env.NODE_ENV === "production" && process.env.DB_SSL === "true"
+    ? { ssl: { rejectUnauthorized: true } }
+    : {}),
+});
+
+export default pool;
