@@ -43,12 +43,36 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [exportWarning, setExportWarning] = useState<string | null>(null);
   const [showAllMode, setShowAllMode] = useState(false);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  const [totalCount, setTotalCount] = useState(0);
+  const [matchingCount, setMatchingCount] = useState(0);
+  const [pageLoading, setPageLoading] = useState(false);
 
   // ─── Refs ────────────────────────────────────────────────────────────
   const abortControllerRef = useRef<AbortController | null>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
   const fromTimeRef = useRef(fromTime);
   const toTimeRef = useRef(toTime);
+
+  // ─── Pagination reset ───────────────────────────────────────────────
+  const resetPagination = useCallback(() => setPage(0), []);
+
+  // ─── URL state persistence ──────────────────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const p = parseInt(params.get("page") || "0", 10);
+    const ps = parseInt(params.get("pageSize") || "50", 10);
+    if (!isNaN(p) && p >= 0) setPage(Math.max(0, p));
+    if (!isNaN(ps) && ps >= 10 && ps <= 100) setPageSize(ps);
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("page", String(page));
+    params.set("pageSize", String(pageSize));
+    window.history.replaceState(null, "", `?${params.toString()}`);
+  }, [page, pageSize]);
 
   // ─── Debounced values (via hook) ─────────────────────────────────────
   const debouncedService = useDebounce(searchService, 2000);
@@ -94,7 +118,7 @@ export default function Home() {
           setServers([]);
         } else {
           setJobs(data.jobs);
-          setServers(data.servers);
+          setServers(data.servers || []);
         }
       })
       .catch((err) => {
@@ -184,17 +208,96 @@ export default function Home() {
     setExportWarning(null);
   }, [results]);
 
+  // ─── Export All CSV ─────────────────────────────────────────────────
+  const handleExportAllCsv = useCallback(async () => {
+    if (showAllMode) {
+      setExportWarning("Export is only available in filtered mode.");
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoading(true);
+    setPageLoading(true);
+
+    const from = buildDateTime(fromDate, fromTime);
+    const to = buildDateTime(toDate, toTime);
+
+    const fmt = (d: Date) => {
+      const base = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      const offset = d.getTimezoneOffset();
+      const sign = offset > 0 ? "-" : "+";
+      const abs = Math.abs(offset);
+      const oh = String(Math.floor(abs / 60)).padStart(2, "0");
+      const om = String(abs % 60).padStart(2, "0");
+      return `${base}${sign}${oh}:${om}`;
+    };
+
+    const params = new URLSearchParams({ from: fmt(from), to: fmt(to), showAll: "false" });
+    if (selectedStatuses.length > 0) params.set("status", selectedStatuses.join(","));
+    if (selectedSchedulers.length > 0) params.set("scheduler", selectedSchedulers.join(","));
+    if (selectedServers.length > 0) params.set("server", selectedServers.join(","));
+    if (debouncedService) params.set("compositeServiceName", debouncedService);
+
+    try {
+      const res = await fetch(`/api/cron-jobs?${params.toString()}`, { signal: controller.signal });
+      if (!res.ok) throw new Error("Failed to fetch all jobs for export");
+      const data = await res.json();
+      const allJobs = data.jobs || data;
+
+      const escape = (s: string) => `"${s.replace(/"/g, '""')}"`;
+      const header = [
+        "Job", "Server", "Status", "Scheduler",
+        "Minutes", "Hours", "Days", "Weeks", "Months", "Years",
+      ].join(",");
+      const rows = allJobs.map((job: CronJob) => [
+        escape(job.compositeServiceName || ""),
+        escape(job.server || ""),
+        job.status ? "true" : "false",
+        escape(job.scheduler ?? ""),
+        escape(job.minutes),
+        escape(job.hours),
+        escape(job.days),
+        escape(job.weeks),
+        escape(job.months),
+        escape(job.years),
+      ].join(","));
+      const csv = header + "\n" + rows.join("\n");
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      a.href = url;
+      a.download = `cron-jobs-all-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      if (err instanceof Error && err.name !== "AbortError") {
+        setExportWarning(err.message);
+      }
+    } finally {
+      setLoading(false);
+      setPageLoading(false);
+    }
+  }, [showAllMode, fromDate, fromTime, toDate, toTime, selectedStatuses, selectedSchedulers, selectedServers, debouncedService]);
+
   // ─── Results fetch ──────────────────────────────────────────────────
   const fetchResults = useCallback(
     (showAll: boolean, from?: Date, to?: Date, service?: string) => {
       setLoading(true);
+      if (page > 0) {
+        setPageLoading(true);
+      }
 
       abortControllerRef.current?.abort();
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
       if (showAll) {
-        const params = new URLSearchParams({ showAll: "true" });
+        const params = new URLSearchParams({ showAll: "true", page: String(page), pageSize: String(pageSize) });
         if (service !== undefined ? service : debouncedService) {
           params.set("compositeServiceName", service !== undefined ? service : debouncedService);
         }
@@ -203,30 +306,35 @@ export default function Home() {
             if (!res.ok) throw new Error("Failed to fetch all jobs");
             return res.json();
           })
-          .then((data: CronJob[]) => {
+          .then((data: { jobs: CronJob[]; total: number; page: number; pageSize: number }) => {
             let mapped: MatchedJobDisplay[];
             if (!showExecutionDates) {
-              mapped = data.map((job) => ({ job, matchedDates: [], totalCount: 0 }));
+              mapped = data.jobs.map((job) => ({ job, matchedDates: [], totalCount: 0 }));
             } else {
               const fromDT = buildDateTime(fromDate, fromTime);
               const toDT = buildDateTime(toDate, toTime);
               const rangeDays = (toDT.getTime() - fromDT.getTime()) / (1000 * 60 * 60 * 24);
               if (rangeDays > 30) {
-                mapped = data.map((job) => ({ job, matchedDates: [], totalCount: 0 }));
+                mapped = data.jobs.map((job) => ({ job, matchedDates: [], totalCount: 0 }));
               } else {
-                mapped = data.map((job) => {
+                mapped = data.jobs.map((job) => {
                   const dates = expandCron(job.schedule, fromDT, toDT);
                   return { job, matchedDates: dates, totalCount: dates.length };
                 });
               }
             }
             setResults(mapped);
+            setTotalCount(data.total);
+            setMatchingCount(data.jobs.length);
           })
           .catch((err) => {
             if (err.name !== "AbortError") setError("Failed to fetch all jobs: " + err.message);
           })
           .finally(() => {
-            if (!controller.signal.aborted) setLoading(false);
+            if (!controller.signal.aborted) {
+              setLoading(false);
+              setPageLoading(false);
+            }
           });
         return;
       }
@@ -234,17 +342,20 @@ export default function Home() {
       if (from && to && from > to) {
         console.error("Invalid date range: 'from' must be before 'to'");
         setLoading(false);
+        setPageLoading(false);
         return;
       }
       if (!from || !to) {
         console.error("Invalid date range: 'from' and 'to' are required");
         setLoading(false);
+        setPageLoading(false);
         return;
       }
       const maxRangeMs = 365 * 24 * 60 * 60 * 1000;
       if (to.getTime() - from.getTime() > maxRangeMs) {
         console.error("Date range too large. Maximum is 365 days.");
         setLoading(false);
+        setPageLoading(false);
         return;
       }
 
@@ -257,7 +368,7 @@ export default function Home() {
         const om = String(abs % 60).padStart(2, "0");
         return `${base}${sign}${oh}:${om}`;
       };
-      const params = new URLSearchParams({ from: fmt(from), to: fmt(to) });
+      const params = new URLSearchParams({ from: fmt(from), to: fmt(to), page: String(page), pageSize: String(pageSize) });
       if (selectedStatuses.length > 0) params.set("status", selectedStatuses.join(","));
       if (selectedSchedulers.length > 0) params.set("scheduler", selectedSchedulers.join(","));
       if (selectedServers.length > 0) params.set("server", selectedServers.join(","));
@@ -269,17 +380,22 @@ export default function Home() {
           if (!res.ok) throw new Error("Failed to fetch filtered jobs");
           return res.json();
         })
-        .then((data: MatchedJob[]) =>
-          setResults(data.map((r) => ({ ...r, matchedDates: r.matchedDates.map((t: number) => new Date(t)) })))
-        )
+        .then((data: { jobs: MatchedJob[]; total: number }) => {
+          setResults(data.jobs.map((r) => ({ ...r, matchedDates: r.matchedDates.map((t: number) => new Date(t)) })));
+          setTotalCount(data.total);
+          setMatchingCount(data.jobs.length);
+        })
         .catch((err) => {
           if (err.name !== "AbortError") setError("Failed to fetch filtered jobs: " + err.message);
         })
         .finally(() => {
-          if (!controller.signal.aborted) setLoading(false);
+          if (!controller.signal.aborted) {
+            setLoading(false);
+            setPageLoading(false);
+          }
         });
     },
-    [selectedServers, selectedStatuses, selectedSchedulers, debouncedService, showExecutionDates, fromDate, fromTime, toDate, toTime]
+    [selectedServers, selectedStatuses, selectedSchedulers, debouncedService, showExecutionDates, fromDate, fromTime, toDate, toTime, page, pageSize]
   );
 
   // ─── Quick range selection ──────────────────────────────────────────
@@ -289,6 +405,7 @@ export default function Home() {
     setToDate(`${to.getFullYear()}-${pad(to.getMonth() + 1)}-${pad(to.getDate())}`);
     setFromTime(`${pad(from.getHours())}:${pad(from.getMinutes())}`);
     setToTime(`${pad(to.getHours())}:${pad(to.getMinutes())}`);
+    setPage(0);
     fetchResults(false, from, to);
   }, [fetchResults]);
 
@@ -305,6 +422,7 @@ export default function Home() {
         setSelectedServers([]);
         setSelectedStatuses([]);
         setSelectedSchedulers([]);
+        setPage(0);
       } else {
         const pad = (n: number) => String(n).padStart(2, "0");
         const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
@@ -312,6 +430,7 @@ export default function Home() {
         setToDate(todayStr);
         setFromTime("00:00");
         setToTime("23:59");
+        setPage(0);
       }
       return !prev;
     });
@@ -363,10 +482,6 @@ export default function Home() {
       fetchResults(false, from, to);
     }
   }, [fetchResults, showAllMode, debouncedFrom, debouncedTo]);
-
-  // ─── Derived values ─────────────────────────────────────────────────
-  const matchingCount = results?.length ?? 0;
-  const totalCount = results?.reduce((sum, r) => sum + r.totalCount, 0) ?? 0;
 
   // ─── Render ─────────────────────────────────────────────────────────
   return (
@@ -460,7 +575,7 @@ export default function Home() {
           onShowAllToggle={handleShowAllToggle}
           // Sort
           sortBy={sortBy}
-          onSortChange={setSortBy}
+          onSortChange={(s) => { setSortBy(s); resetPagination(); }}
           showSortMenu={sortMenu.showSortMenu}
           setShowSortMenu={sortMenu.setShowSortMenu}
           sortMenuRef={sortMenu.sortMenuRef}
@@ -469,6 +584,10 @@ export default function Home() {
           // Export
           results={results}
           onExport={handleExportCsv}
+          onExportAll={handleExportAllCsv}
+          exportAllLoading={pageLoading}
+          // Pagination
+          onResetPagination={resetPagination}
         />
 
         <Suspense fallback={<div className="py-8 text-center text-sm text-slate-400">Loading results…</div>}>
@@ -477,6 +596,10 @@ export default function Home() {
             sortedResults={sortedResults}
             matchingCount={matchingCount}
             totalCount={totalCount}
+            page={page}
+            pageSize={pageSize}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(0); }}
             exportWarning={exportWarning}
             showExecutionDates={showExecutionDates}
             sortBy={sortBy}

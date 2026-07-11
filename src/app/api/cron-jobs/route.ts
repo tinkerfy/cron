@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/app/lib/db";
 import { cronMatches, precomputeCron } from "@/app/lib/cron";
-import { CronJob, CronJobRow } from "@/app/lib/types";
+import { CronJob, CronJobRow, MatchedJob, PaginatedResponse } from "@/app/lib/types";
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,6 +14,9 @@ export async function GET(request: NextRequest) {
     const scheduler = searchParams.get("scheduler");
     const showAll = searchParams.get("showAll") === "true";
 
+    const page = Math.max(0, parseInt(searchParams.get("page") || "0", 10));
+    const pageSize = Math.min(100, Math.max(10, parseInt(searchParams.get("pageSize") || "50", 10)));
+    const offset = page * pageSize;
     // For showAll mode, only apply service name filter
     if (showAll) {
       const whereClauses: string[] = [];
@@ -34,6 +37,11 @@ export async function GET(request: NextRequest) {
         params
       ) as unknown as [CronJobRow[]];
 
+      const [[{ total }]] = await pool.query(
+        `SELECT COUNT(*) as total FROM cron_jobs ${whereClause}`,
+        params
+      ) as unknown as [{ total: number }[]];
+
       const jobs: CronJob[] = result.map((row) => ({
         schedule: `${row.minutes} ${row.hours} ${row.days} ${row.months} ${row.weeks} ${row.years || '*'}`,
         minutes: row.minutes,
@@ -48,7 +56,7 @@ export async function GET(request: NextRequest) {
         scheduler: row.scheduler,
       }));
 
-      return NextResponse.json(jobs);
+      return NextResponse.json<PaginatedResponse<CronJob>>({ jobs, total, page, pageSize });
     }
 
     const whereClauses: string[] = [];
@@ -93,6 +101,8 @@ export async function GET(request: NextRequest) {
     }
     const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
+    // For date range queries, fetch all jobs first (cron matching happens after)
+    // Pagination before cron matching would give wrong total counts
     const [result] = await pool.query(
       `SELECT minutes, hours, days, months, weeks, years, server, compositeservicename, status, scheduler
         FROM cron_jobs
@@ -100,6 +110,11 @@ export async function GET(request: NextRequest) {
         ORDER BY compositeservicename`,
       params
     ) as unknown as [CronJobRow[]];
+
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) as total FROM cron_jobs ${whereClause}`,
+      params
+    ) as unknown as [{ total: number }[]];
 
     const jobs: CronJob[] = result.map((row) => ({
       schedule: `${row.minutes} ${row.hours} ${row.days} ${row.months} ${row.weeks} ${row.years || '*'}`,
@@ -119,7 +134,7 @@ export async function GET(request: NextRequest) {
 
     // If no date range provided, return raw jobs
     if (!fromDate || !toDate) {
-      return NextResponse.json({ jobs, servers });
+      return NextResponse.json<PaginatedResponse<CronJob>>({ jobs, total: jobs.length, page, pageSize, servers });
     }
 
     const from = new Date(fromDate);
@@ -159,8 +174,19 @@ export async function GET(request: NextRequest) {
     });
 
     // Filter out jobs with no matches in the date range
-    const resultsWithMatches = results.filter(r => r.totalCount > 0);
-    return NextResponse.json(resultsWithMatches);
+    const resultsWithMatches = results.filter(r => r.totalCount > 0) as MatchedJob[];
+
+    // Apply pagination *after* cron matching (total = matched jobs count)
+    const matchedTotal = resultsWithMatches.length;
+    const paginatedJobs = resultsWithMatches.slice(offset, offset + pageSize);
+
+    return NextResponse.json<PaginatedResponse<MatchedJob>>({
+      jobs: paginatedJobs,
+      total: matchedTotal,
+      page,
+      pageSize,
+      servers,
+    });
   } catch (error) {
     console.error("Failed to fetch cron jobs:", error);
     return NextResponse.json(

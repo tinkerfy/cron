@@ -2,6 +2,7 @@ import React from "react";
 import ResultsList from "./results";
 import SummaryBar from "./results/summary-bar";
 import EmptyState from "./results/empty-state";
+import PaginationControls from "./results/pagination-controls";
 import { SortOption } from "./results";
 import { MatchedJobDisplay } from "@/app/lib/types";
 
@@ -10,6 +11,10 @@ export interface ResultsViewProps {
   sortedResults: MatchedJobDisplay[] | null;
   matchingCount: number;
   totalCount: number;
+  page: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
   exportWarning: string | null;
   showExecutionDates: boolean;
   sortBy: SortOption;
@@ -25,6 +30,10 @@ const ResultsView = React.memo(function ResultsView({
   sortedResults,
   matchingCount,
   totalCount,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
   exportWarning,
   showExecutionDates,
   sortBy,
@@ -39,6 +48,13 @@ const ResultsView = React.memo(function ResultsView({
         matchingCount={matchingCount}
         totalCount={totalCount}
         exportWarning={exportWarning}
+      />
+      <PaginationControls
+        currentPage={page}
+        pageSize={pageSize}
+        total={totalCount}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
       />
       <ResultsList
         sortedResults={sortedResults}

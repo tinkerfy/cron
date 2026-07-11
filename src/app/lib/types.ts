@@ -38,3 +38,11 @@ export interface CronJobRow {
   status: string;
   scheduler: string | null;
 }
+
+export interface PaginatedResponse<T> {
+  jobs: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  servers?: string[];
+}

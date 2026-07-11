@@ -70,6 +70,10 @@ export interface FilterPanelProps {
   // Export
   results: { totalCount: number }[] | null;
   onExport: () => void;
+  onExportAll?: () => void;
+  exportAllLoading?: boolean;
+  // Pagination
+  onResetPagination?: () => void;
 }
 
 /**
@@ -121,6 +125,9 @@ const FilterPanel = React.memo(function FilterPanel({
   onExport,
   onRulerFromTimeChange,
   onRulerToTimeChange,
+  onExportAll,
+  exportAllLoading,
+  onResetPagination,
 }: FilterPanelProps) {
   // Show All icons
   const showAllActiveIcon = (
@@ -147,24 +154,24 @@ const FilterPanel = React.memo(function FilterPanel({
             servers={servers}
             selected={selectedServers}
             disabled={showAllMode}
-            onClear={onServerClear}
-            onToggle={onServerToggle}
+            onClear={() => { onResetPagination?.(); onServerClear(); }}
+            onToggle={(s) => { onResetPagination?.(); onServerToggle(s); }}
           />
           <StatusFilter
             selected={selectedStatuses}
             disabled={showAllMode}
-            onClear={onStatusClear}
-            onToggle={onStatusToggle}
+            onClear={() => { onResetPagination?.(); onStatusClear(); }}
+            onToggle={(s) => { onResetPagination?.(); onStatusToggle(s); }}
           />
           <SchedulerFilter
             selected={selectedSchedulers}
             disabled={showAllMode}
-            onClear={onSchedulerClear}
-            onToggle={onSchedulerToggle}
+            onClear={() => { onResetPagination?.(); onSchedulerClear(); }}
+            onToggle={(s) => { onResetPagination?.(); onSchedulerToggle(s); }}
           />
           <ServiceSearchInput
             value={searchService}
-            onChange={onSearchChange}
+            onChange={(s) => { onResetPagination?.(); onSearchChange(s); }}
             onEnter={onSearchEnter}
           />
         </div>
@@ -195,11 +202,11 @@ const FilterPanel = React.memo(function FilterPanel({
           toDate={toDate}
           toTime={toTime}
           disabled={showAllMode}
-          onFromDateChange={onFromDateChange}
-          onFromTimeChange={onFromTimeChange}
-          onToDateChange={onToDateChange}
-          onToTimeChange={onToTimeChange}
-          onApply={onApplyFilter}
+          onFromDateChange={(d) => { onResetPagination?.(); onFromDateChange(d); }}
+          onFromTimeChange={(t) => { onResetPagination?.(); onFromTimeChange(t); }}
+          onToDateChange={(d) => { onResetPagination?.(); onToDateChange(d); }}
+          onToTimeChange={(t) => { onResetPagination?.(); onToTimeChange(t); }}
+          onApply={() => { onResetPagination?.(); onApplyFilter(); }}
         />
       </div>
 
@@ -217,7 +224,7 @@ const FilterPanel = React.memo(function FilterPanel({
         <button
           type="button"
           aria-pressed={showExecutionDates}
-          onClick={onShowDatesToggle}
+          onClick={() => { onResetPagination?.(); onShowDatesToggle(); }}
           className={`ml-auto text-[10px] px-2 py-0.5 rounded-full transition-colors ${
             showExecutionDates
               ? "bg-[#E4F2E7] dark:bg-[#1A3A38] text-[#51A090] dark:text-[#6AD4B8] hover:bg-[#D9ECD2] dark:hover:bg-[#2D4A48]"
@@ -230,7 +237,7 @@ const FilterPanel = React.memo(function FilterPanel({
         {/* Sort menu */}
         <SortMenu
           sortBy={sortBy}
-          onSortChange={onSortChange}
+          onSortChange={(s) => { onResetPagination?.(); onSortChange(s); }}
           showSortMenu={showSortMenu}
           setShowSortMenu={setShowSortMenu}
           sortMenuRef={sortMenuRef}
@@ -253,7 +260,7 @@ const FilterPanel = React.memo(function FilterPanel({
         />
 
         {/* Export */}
-        <ExportButton results={results} onExport={onExport} />
+        <ExportButton results={results} onExport={onExport} onExportAll={onExportAll} exportAllLoading={exportAllLoading} />
       </div>
     </div>
   );
