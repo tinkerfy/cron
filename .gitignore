@@ -2,7 +2,8 @@
 
 # dependencies
 /node_modules
-/server-deploy
+/server-deploy/.next
+/server-deploy/node_modules
 /.pnp
 .pnp.*
 .yarn/*
